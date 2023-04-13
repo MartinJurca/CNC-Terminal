@@ -1,0 +1,11 @@
+C:\Users\Martin\source\repos\CNC-Terminál\bin\Debug\CNC-Terminál.exe.config
+C:\Users\Martin\source\repos\CNC-Terminál\bin\Debug\CNC-Terminál.exe
+C:\Users\Martin\source\repos\CNC-Terminál\bin\Debug\CNC-Terminál.pdb
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC-Terminál.csproj.AssemblyReference.cache
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC-Terminál.csproj.SuggestedBindingRedirects.cache
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC_Terminál.Form1.resources
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC_Terminál.Properties.Resources.resources
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC-Terminál.csproj.GenerateResource.cache
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC-Terminál.csproj.CoreCompileInputs.cache
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC-Terminál.exe
+C:\Users\Martin\source\repos\CNC-Terminál\obj\Debug\CNC-Terminál.pdb

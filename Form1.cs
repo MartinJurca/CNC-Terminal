@@ -7,11 +7,21 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.IO.Ports;
+using System.Threading;
+using System.Windows;
 
 namespace CNC_Terminál
 {
+    public static class PORT
+    {
+        private static SerialPort port;
+        public static bool jepřipojen { get; private set; } = false;
+        //
+    }
     public partial class Form1 : Form
     {
+        #region resize proměnné
         //aktualizace velikosti
         Size vychozivelikost;
         //
@@ -162,7 +172,58 @@ namespace CNC_Terminál
         Point pozice_radiobutton_motzap;
         Size velikost_radiobutton_motvyp;
         Point pozice_radiobutton_motvyp;
-        //
+        #endregion
+        #region port a jeho proměnné
+        SerialPort PORT = new SerialPort();
+        bool port_jepripojen = false;
+        bool port_vysledekfunkce = false;
+        String port_zpetnavazba;
+
+        void Port_VychoziNastaveni()
+        {
+            PORT.DtrEnable = true;
+            PORT.RtsEnable = false;
+            PORT.Parity = Parity.None;
+            PORT.Handshake = Handshake.None;
+            PORT.BaudRate = 921600;
+        }
+        #endregion
+
+        #region generátor pohybu
+        public enum smer
+        {
+            nahoru,
+            nahoru_doprava,
+            doprava,
+            doprava_dolů,
+            dolů,
+            doleva_dolů,
+            doleva,
+            doleva_nahoru,
+            Z_nahoru,
+            Z_dolů,
+            Z_nahoru_bez_čekání,
+            Z_dolů_bez_čekání
+        }
+
+        public static readonly byte[] maskasmeru =
+        {
+            0b01000000, // nahoru
+            0b01010000, // nahoru_doprava
+            0b01100000, // doprava
+            0b01110000, // doprava_dolů
+            0b10000000, // dolů
+            0b10010000, // doleva_dolů
+            0b10100000, // doleva
+            0b10110000, // doleva_nahoru
+            0b11000000, // Z_nahoru
+            0b11010000, // Z_dolů
+            0b11100000, // Z_nahoru_bez_čekání
+            0b11110000 // Z_dolů_bez_čekání
+        };
+
+        #endregion
+
         public Form1()
         {
             InitializeComponent();
@@ -170,6 +231,24 @@ namespace CNC_Terminál
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            #region nastavení výchozího stavu
+            radioButton_akczapnuto.Checked = true;
+            radioButton_ventauto.Checked = true;
+            radioButton_ponechatgkod.Checked = true;
+            radioButton_motvyp.Checked = true;
+            textBox_ventval.Text = "0";
+            textBox_rychlostxy.Text = "1.0";
+            textBox_rychlostz.Text = "1.0";
+            label_virtualnix.Text = "X: 0";
+            label_virtualniy.Text = "Y: 0";
+            label_virtualniz.Text = "Z: 0";
+            label_realnax.Text = "X: 0";
+            label_realnay.Text = "Y: 0";
+            label_realnaz.Text = "Z: 0";
+            Nastav_UI_Nepripojeno();
+            Nastav_UI_BezPrace();
+            #endregion
+            #region výchozí nastavení resize proměnných
             vychozivelikost = this.Size;
             //
             // button
@@ -319,6 +398,7 @@ namespace CNC_Terminál
             pozice_radiobutton_motzap = radioButton_motzap.Location;
             velikost_radiobutton_motvyp = radioButton_motvyp.Size;
             pozice_radiobutton_motvyp = radioButton_motvyp.Location;
+            #endregion
         }
 
         private void groupBox_virtualnipoloha_Enter(object sender, EventArgs e)
@@ -951,6 +1031,156 @@ namespace CNC_Terminál
             velikost.Height = (int)((float)velikost.Height * nasobicy);
             radioButton_motvyp.Location = pozice;
             radioButton_motvyp.Size = velikost;
+        }
+
+        public void Nastav_UI_Nepripojeno()
+        {
+            groupBox_akcelerace.Enabled = false;
+            groupBox_ventilator.Enabled = false;
+            groupBox_rychlosti.Enabled = false;
+            groupBox_motory.Enabled = false;
+            groupBox_nastvirtpoloh.Enabled = false;
+            groupBox_gkod.Enabled = false;
+            groupBox_virtualnipoloha.Enabled = false;
+            groupBox_realnapoloha.Enabled = false;
+            button_pripojit.Enabled = true;
+            button_odpojit.Enabled = false;
+            button_homing.Enabled = false;
+            button_nahoru1.Enabled = false;
+            button_nahoru10.Enabled = false;
+            button_nahoru100.Enabled = false;
+            button_dolu1.Enabled = false;
+            button_dolu10.Enabled = false;
+            button_dolu100.Enabled = false;
+            button_doprava1.Enabled = false;
+            button_doprava10.Enabled = false;
+            button_doprava100.Enabled = false;
+            button_doleva1.Enabled = false;
+            button_doleva10.Enabled = false;
+            button_doleva100.Enabled = false;
+            button_znahoru01.Enabled = false;
+            button_znahoru1.Enabled = false;
+            button_znahoru10.Enabled = false;
+            button_zdolu01.Enabled = false;
+            button_zdolu1.Enabled = false;
+            button_zdolu10.Enabled = false;
+        }
+
+        public void Nastav_UI_Pripopjeno()
+        {
+            groupBox_akcelerace.Enabled = true;
+            groupBox_ventilator.Enabled = true;
+            groupBox_rychlosti.Enabled = true;
+            groupBox_motory.Enabled = true;
+            groupBox_nastvirtpoloh.Enabled = true;
+            groupBox_gkod.Enabled = true;
+            groupBox_virtualnipoloha.Enabled = true;
+            groupBox_realnapoloha.Enabled = true;
+            button_pripojit.Enabled = false;////////////////
+            button_odpojit.Enabled = true;
+            button_homing.Enabled = true;
+            button_nahoru1.Enabled = true;
+            button_nahoru10.Enabled = true;
+            button_nahoru100.Enabled = true;
+            button_dolu1.Enabled = true;
+            button_dolu10.Enabled = true;
+            button_dolu100.Enabled = true;
+            button_doprava1.Enabled = true;
+            button_doprava10.Enabled = true;
+            button_doprava100.Enabled = true;
+            button_doleva1.Enabled = true;
+            button_doleva10.Enabled = true;
+            button_doleva100.Enabled = true;
+            button_znahoru01.Enabled = true;
+            button_znahoru1.Enabled = true;
+            button_znahoru10.Enabled = true;
+            button_zdolu01.Enabled = true;
+            button_zdolu1.Enabled = true;
+            button_zdolu10.Enabled = true;
+        }
+
+        public void Nastav_UI_PraceSpustena()
+        {
+            groupBox_akcelerace.Enabled = false;
+            groupBox_ventilator.Enabled = false;
+            groupBox_rychlosti.Enabled = false;
+            groupBox_motory.Enabled = false;
+            groupBox_nastvirtpoloh.Enabled = false;
+            button_homing.Enabled = false;
+            button_nahoru1.Enabled = false;
+            button_nahoru10.Enabled = false;
+            button_nahoru100.Enabled = false;
+            button_dolu1.Enabled = false;
+            button_dolu10.Enabled = false;
+            button_dolu100.Enabled = false;
+            button_doprava1.Enabled = false;
+            button_doprava10.Enabled = false;
+            button_doprava100.Enabled = false;
+            button_doleva1.Enabled = false;
+            button_doleva10.Enabled = false;
+            button_doleva100.Enabled = false;
+            button_znahoru01.Enabled = false;
+            button_znahoru1.Enabled = false;
+            button_znahoru10.Enabled = false;
+            button_zdolu01.Enabled = false;
+            button_zdolu1.Enabled = false;
+            button_zdolu10.Enabled = false;
+            button_nacistgkod.Enabled = false;
+            button_spustitprogram.Enabled = false;
+            button_pozastavit.Enabled = true;
+            button_zrusit.Enabled = true;
+        }
+
+        public void Nastav_UI_BezPrace()
+        {
+            groupBox_akcelerace.Enabled = true;
+            groupBox_ventilator.Enabled = true;
+            groupBox_rychlosti.Enabled = true;
+            groupBox_motory.Enabled = true;
+            groupBox_nastvirtpoloh.Enabled = true;
+            button_homing.Enabled = true;
+            button_nahoru1.Enabled = true;
+            button_nahoru10.Enabled = true;
+            button_nahoru100.Enabled = true;
+            button_dolu1.Enabled = true;
+            button_dolu10.Enabled = true;
+            button_dolu100.Enabled = true;
+            button_doprava1.Enabled = true;
+            button_doprava10.Enabled = true;
+            button_doprava100.Enabled = true;
+            button_doleva1.Enabled = true;
+            button_doleva10.Enabled = true;
+            button_doleva100.Enabled = true;
+            button_znahoru01.Enabled = true;
+            button_znahoru1.Enabled = true;
+            button_znahoru10.Enabled = true;
+            button_zdolu01.Enabled = true;
+            button_zdolu1.Enabled = true;
+            button_zdolu10.Enabled = true;
+            button_nacistgkod.Enabled = true;
+            button_spustitprogram.Enabled = false;
+            button_pozastavit.Enabled = false;
+            button_zrusit.Enabled = false;
+        }
+
+        private void button_pripojit_Click(object sender, EventArgs e)
+        {
+            Nastav_UI_Pripopjeno();
+        }
+
+        private void button_odpojit_Click(object sender, EventArgs e)
+        {
+            Nastav_UI_Nepripojeno();
+        }
+
+        private void button_nacistgkod_Click(object sender, EventArgs e)
+        {
+            Nastav_UI_PraceSpustena();
+        }
+
+        private void button_zrusit_Click(object sender, EventArgs e)
+        {
+            Nastav_UI_BezPrace();
         }
     }
 }

@@ -325,6 +325,7 @@
             this.button_pripojit.TabIndex = 19;
             this.button_pripojit.Text = "Připojit";
             this.button_pripojit.UseVisualStyleBackColor = false;
+            this.button_pripojit.Click += new System.EventHandler(this.button_pripojit_Click);
             // 
             // button_odpojit
             // 
@@ -336,6 +337,7 @@
             this.button_odpojit.TabIndex = 20;
             this.button_odpojit.Text = "Odpojit";
             this.button_odpojit.UseVisualStyleBackColor = false;
+            this.button_odpojit.Click += new System.EventHandler(this.button_odpojit_Click);
             // 
             // comboBox_porty
             // 
@@ -774,6 +776,7 @@
             this.button_zrusit.TabIndex = 3;
             this.button_zrusit.Text = "Zrušit";
             this.button_zrusit.UseVisualStyleBackColor = false;
+            this.button_zrusit.Click += new System.EventHandler(this.button_zrusit_Click);
             // 
             // button_pozastavit
             // 
@@ -801,6 +804,7 @@
             this.button_nacistgkod.TabIndex = 0;
             this.button_nacistgkod.Text = "Načíst G-kód";
             this.button_nacistgkod.UseVisualStyleBackColor = true;
+            this.button_nacistgkod.Click += new System.EventHandler(this.button_nacistgkod_Click);
             // 
             // textBox_feedback
             // 

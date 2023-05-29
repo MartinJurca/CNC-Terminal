@@ -13,12 +13,6 @@ using System.Windows;
 
 namespace CNC_Terminál
 {
-    public static class PORT
-    {
-        private static SerialPort port;
-        public static bool jepřipojen { get; private set; } = false;
-        //
-    }
     public partial class Form1 : Form
     {
         #region resize proměnné
@@ -172,56 +166,6 @@ namespace CNC_Terminál
         Point pozice_radiobutton_motzap;
         Size velikost_radiobutton_motvyp;
         Point pozice_radiobutton_motvyp;
-        #endregion
-        #region port a jeho proměnné
-        SerialPort PORT = new SerialPort();
-        bool port_jepripojen = false;
-        bool port_vysledekfunkce = false;
-        String port_zpetnavazba;
-
-        void Port_VychoziNastaveni()
-        {
-            PORT.DtrEnable = true;
-            PORT.RtsEnable = false;
-            PORT.Parity = Parity.None;
-            PORT.Handshake = Handshake.None;
-            PORT.BaudRate = 921600;
-        }
-        #endregion
-
-        #region generátor pohybu
-        public enum smer
-        {
-            nahoru,
-            nahoru_doprava,
-            doprava,
-            doprava_dolů,
-            dolů,
-            doleva_dolů,
-            doleva,
-            doleva_nahoru,
-            Z_nahoru,
-            Z_dolů,
-            Z_nahoru_bez_čekání,
-            Z_dolů_bez_čekání
-        }
-
-        public static readonly byte[] maskasmeru =
-        {
-            0b01000000, // nahoru
-            0b01010000, // nahoru_doprava
-            0b01100000, // doprava
-            0b01110000, // doprava_dolů
-            0b10000000, // dolů
-            0b10010000, // doleva_dolů
-            0b10100000, // doleva
-            0b10110000, // doleva_nahoru
-            0b11000000, // Z_nahoru
-            0b11010000, // Z_dolů
-            0b11100000, // Z_nahoru_bez_čekání
-            0b11110000 // Z_dolů_bez_čekání
-        };
-
         #endregion
 
         public Form1()
@@ -399,11 +343,44 @@ namespace CNC_Terminál
             velikost_radiobutton_motvyp = radioButton_motvyp.Size;
             pozice_radiobutton_motvyp = radioButton_motvyp.Location;
             #endregion
+            // test
+            List<byte> neco = new List<byte>
+            {
+                0b11110000, 0b11110000, 0b11111111, 0b10011101, 0b10011101
+            };
+            List<byte> vysledek = MOTIONGENERATOR.CompressMotion(neco);
+            int stuj = 1520;
+            gridpoint cnt = new gridpoint() { x = 0, y = 0, z = 0 };
+            gridpoint rad = new gridpoint() { x = 0, y = 5, z = 0 };
+            gridpoint end = new gridpoint() { x = 0, y = 5, z = 0 };
+            List<gridpoint> pagman = MOTIONGENERATOR.GetCircleCCW(cnt, rad, end);
+            //
+            int[,] rastr = new int[32,32];
+            for (int x = 0; x < 32; x++)
+            {
+                for (int y = 0; y < 32; y++)
+                {
+                    rastr[x, y] = 0;
+                }
+            }
+            foreach (gridpoint gp in pagman)
+            {
+                rastr[gp.x+16, gp.y+16] = 1;
+                for (int y_ = 31; y_ > 0; y_--)
+                {
+                    Console.WriteLine();
+                    for (int x_ = 0; x_ < 32;x_++)
+                    {
+                        Console.Write("{0}", rastr[x_, y_]);
+                    }
+                }
+            }
+            Console.ReadKey();
         }
 
         private void groupBox_virtualnipoloha_Enter(object sender, EventArgs e)
         {
-
+            //
         }
 
         private void Form1_SizeChanged(object sender, EventArgs e)
@@ -1182,5 +1159,555 @@ namespace CNC_Terminál
         {
             Nastav_UI_BezPrace();
         }
+    }
+
+    #region generátor pohybu
+    public struct gridpoint
+    {
+        public enum direction
+        {
+            nahoru = 0,
+            doprava_nahoru,
+            doprava,
+            doprava_dolů,
+            dolů,
+            doleva_dolů,
+            doleva,
+            doleva_nahoru,
+            Z_nahoru,
+            Z_dolů,
+            Z_nahoru_bez_čekání,
+            Z_dolů_bez_čekání
+        }
+        public int x;
+        public int y;
+        public int z;
+        public gridpoint(int x, int y, int z)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+        public void Set(int x, int y, int z = 0)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+        public void Clear()
+        {
+            x = 0;
+            y = 0;
+            z = 0;
+        }
+        public bool IsEqual(in gridpoint point)
+        {
+            bool flag = true;
+            if (this.x != point.x) flag = false;
+            if (this.y != point.y) flag = false;
+            if (this.z != point.z) flag = false;
+            return flag;
+        }
+        public double DistanceTo(in gridpoint point)
+        {
+            if (this.IsEqual(point)) return 0.0;
+            double p1 = (double)point.x - (double)this.x;
+            double p2 = (double)point.y - (double)this.y;
+            double p3 = (double)point.z - (double)this.z;
+            p1 = Math.Pow(Math.Abs(p1), 2);
+            p2 = Math.Pow(Math.Abs(p2), 2);
+            p3 = Math.Pow(Math.Abs(p3), 2);
+            return Math.Sqrt(p1 + p2 + p3);
+        }
+        public int DirectingTo(in gridpoint point)
+        {
+            int result = 0;
+            if (this.z > point.z) result += 100; // Z-dolů
+            else if (this.z < point.z) result += 200; // Z-nahoru
+            if (this.x > point.x) // doleva
+            {
+                if (this.y > point.y) //doleva dolů
+                {
+                    result += (int)direction.doleva_dolů;
+                    goto next;
+                }
+                if (this.y < point.y) //doleva nahoru
+                {
+                    result += (int)direction.doleva_nahoru;
+                    goto next;
+                }
+            }
+            if (this.x < point.x) // doprava
+            {
+                if (this.y > point.y) //doprava dolů
+                {
+                    result += (int)direction.doprava_dolů;
+                    goto next;
+                }
+                if (this.y < point.y) //doprava nahoru
+                {
+                    result += (int)direction.doprava_nahoru;
+                    goto next;
+                }
+            }
+            if (this.x == point.x)
+            {
+                if (this.y > point.y) // dolů
+                {
+                    result += (int)direction.dolů;
+                    goto next;
+                }
+                if (this.y < point.y) // nahoru
+                {
+                    result += (int)direction.nahoru;
+                    goto next;
+                }
+            }
+            if (this.y == point.y)
+            {
+                if (this.x > point.x) // doleva
+                {
+                    result += (int)direction.doleva;
+                    goto next;
+                }
+                if (this.x < point.x) // doprava
+                {
+                    result += (int)direction.doprava;
+                    goto next;
+                }
+            }
+            next:
+            return result;
+        }
+    }
+    public static class MOTIONGENERATOR
+    {
+        public enum direction
+        {
+            nahoru = 0,
+            doprava_nahoru,
+            doprava,
+            doprava_dolů,
+            dolů,
+            doleva_dolů,
+            doleva,
+            doleva_nahoru,
+            Z_nahoru,
+            Z_dolů,
+            Z_nahoru_bez_čekání,
+            Z_dolů_bez_čekání
+        }
+        public static readonly byte[] directionmask =
+        {
+            0b01000000, // nahoru
+            0b01010000, // nahoru_doprava
+            0b01100000, // doprava
+            0b01110000, // doprava_dolů
+            0b10000000, // dolů
+            0b10010000, // doleva_dolů
+            0b10100000, // doleva
+            0b10110000, // doleva_nahoru
+            0b11000000, // Z_nahoru
+            0b11010000, // Z_dolů
+            0b11100000, // Z_nahoru_bez_čekání
+            0b11110000 // Z_dolů_bez_čekání
+        };
+
+        static private int Max(int n1, int n2, int n3)
+        {
+            int m1 = n1 > n2 ? n1 : n2;
+            int m2 = n2 > n3 ? n2 : n3;
+            return m1 > m2 ? m1 : m2;
+        }
+        public static List<byte> DecompressMotion(in List<byte> motion)
+        {
+            // kontrola dat
+            if ((motion == null) || (motion.Count == 0))
+            {
+                throw new ArgumentNullException("Argument null or empty");
+            }
+            foreach (byte step in motion)
+            {
+                if (step < '@') throw new ArgumentException("Argument is invalid");
+            }
+            // dekomprese dat
+            List<byte> newmotion = new List<byte>();
+            foreach (byte step in motion)
+            {
+                byte direction = (byte)(step & 0b11110000);
+                byte count = (byte)(step & 0b00001111);
+                count++;
+                for (int i = 0; i < count; i++)
+                {
+                    newmotion.Add(direction);
+                }
+            }
+            return newmotion;
+        }
+        public static List<byte> CompressMotion(List<byte> motion)
+        {
+            // kontrola dat
+            if ((motion == null) || (motion.Count == 0))
+            {
+                throw new ArgumentNullException("Argument null or empty");
+            }
+            foreach (byte step in motion)
+            {
+                if (step < '@') throw new ArgumentException("Argument is invalid");
+            }
+            // dekomprese dat
+            motion = DecompressMotion(motion);
+            // přepočt kroků
+            byte laststep = 0;
+            List<byte> direction = new List<byte>();
+            List<byte> count = new List<byte>();
+            foreach (byte step in motion)
+            {
+                if (step != laststep)
+                {
+                    laststep = step;
+                    direction.Add(step);
+                    count.Add(0);
+                    continue;
+                }
+                if (count[count.Count - 1] >= 15)
+                {
+                    if (count[count.Count - 1] >= 16) throw new Exception("Counter failed");
+                    direction.Add(step);
+                    count.Add(0);
+                    continue;
+                }
+                count[count.Count - 1]++;
+            }
+            // sloučení dat
+            if (direction.Count != count.Count) throw new Exception("Fusion failed");
+            motion.Clear();
+            for (int i = 0; i < direction.Count; i++)
+            {
+                byte newbyte = (byte)(direction[i] | count[i]);
+                motion.Add(newbyte);
+            }
+            return motion;
+            #region původní algoritmus
+            /*
+            if ((motion == null) || (motion.Count == 0))
+            {
+                throw new Exception("Argument is null or empty");
+            }
+            // přepočet opakujících se kroků:
+            const uint looptimeout = 1000000;
+            uint timeoutcounter = 0;
+            List<byte> partstep = new List<byte>();
+            List<byte> partcount = new List<byte>();
+            byte laststep = 0;
+            foreach (byte step in motion)
+            {
+                if (timeoutcounter > looptimeout)
+                {
+                    throw new Exception("Loop timeout");
+                }
+                if (((byte)(step & 0b11110000)) != laststep)
+                {
+                    laststep = (byte)(step & 0b11110000);
+                    partstep.Add(laststep);
+                    partcount.Add((byte)(step & 0b00001111));
+                    timeoutcounter++;
+                    continue;
+                }
+                if (partcount[partcount.Count - 1] >= 15)
+                {
+                    if (partcount[partcount.Count -1] >= 16)
+                    {
+                        throw new Exception("Counter failed");
+                    }
+                    byte newstep = (byte)(step & 0b11110000);
+                    partstep.Add(newstep);
+                    byte newcount = (byte)(step & 0b00001111);
+                    partcount.Add(newcount);
+                    timeoutcounter++;
+                    continue;
+                }
+                byte sum = (byte)((byte)(step & 0b00001111) + partcount[partcount.Count - 1]);
+                if (sum >= 16)
+                {
+                    byte oldbyte = partcount[partcount.Count - 1];
+                    byte newbyte = (byte)(step & 0b00001111);
+                    if (oldbyte == 15)
+                    {
+                        byte newstep = (byte)(step & 0b11110000);
+                        partstep.Add(newstep);
+                        byte newcount = (byte)(step & 0b00001111);
+                        partcount.Add(newcount);
+                        timeoutcounter++;
+                        continue;
+                    }
+                    partcount[partcount.Count - 1] = 0b00001111;
+                    byte diference = (byte)(15 - oldbyte);
+                    newbyte -= diference;
+                    partstep.Add((byte)(step & 0b11110000));
+                    partcount.Add(newbyte);
+                    timeoutcounter++;
+                    continue;
+                }
+                partcount[partcount.Count - 1] += (byte)(step & 0b00001111);
+                timeoutcounter++;
+            }
+            // sloučení součtů:
+            if (partstep.Count != partcount.Count)
+            {
+                throw new Exception("Merge failed");
+            }
+            List<byte> newmotion = new List<byte>();
+            for (int i = 0; i < partstep.Count; i++)
+            {
+                byte newbyte = (byte)(partstep[i] | partcount[i]);
+                newmotion.Add(newbyte);
+            }
+            return newmotion;
+            */
+            #endregion
+        }
+        public static List<gridpoint> GetLine(int x0, int y0, int z0, int x1, int y1, int z1)
+        {
+            List<gridpoint> line = new List<gridpoint>();
+            int dx = Math.Abs(x1-x0), sx = x0<x1 ? 1 : -1;
+            int dy = Math.Abs(y1-y0), sy = y0<y1 ? 1 : -1;
+            int dz = Math.Abs(z1-z0), sz = z0<z1 ? 1 : -1;
+            int dm = Max(dx, dy, dz), i = dm; /* maximum difference */
+            x1 = y1 = z1 = dm/2; /* error offset */
+
+            for (; ; )
+            {  /* loop */
+                gridpoint gp = new gridpoint(x0, y0, z0);
+                line.Add(gp);
+                if (i-- == 0) break;
+                x1 -= dx; if (x1 < 0) { x1 += dm; x0 += sx; }
+                y1 -= dy; if (y1 < 0) { y1 += dm; y0 += sy; }
+                z1 -= dz; if (z1 < 0) { z1 += dm; z0 += sz; }
+            }
+            return line;
+        }
+        public static List<gridpoint> GetLine(in gridpoint gp1, in gridpoint gp2)
+        {
+            int x0, y0, z0, x1, y1, z1;
+            x0 = gp1.x;
+            y0 = gp1.y;
+            z0 = gp1.z;
+            x1 = gp2.x;
+            y1 = gp2.y;
+            z1 = gp2.z;
+            List<gridpoint> line = new List<gridpoint>();
+            int dx = Math.Abs(x1-x0), sx = x0<x1 ? 1 : -1;
+            int dy = Math.Abs(y1-y0), sy = y0<y1 ? 1 : -1;
+            int dz = Math.Abs(z1-z0), sz = z0<z1 ? 1 : -1;
+            int dm = Max(dx, dy, dz), i = dm; /* maximum difference */
+            x1 = y1 = z1 = dm/2; /* error offset */
+
+            for (; ; )
+            {  /* loop */
+                gridpoint gp = new gridpoint(x0, y0, z0);
+                line.Add(gp);
+                if (i-- == 0) break;
+                x1 -= dx; if (x1 < 0) { x1 += dm; x0 += sx; }
+                y1 -= dy; if (y1 < 0) { y1 += dm; y0 += sy; }
+                z1 -= dz; if (z1 < 0) { z1 += dm; z0 += sz; }
+            }
+            return line;
+        }
+        public static List<gridpoint> GetCircleCCW(gridpoint center, gridpoint start, gridpoint end)
+        {
+            int r1 = (int)(center.DistanceTo(start) + 0.5);
+            int r2 = (int)(center.DistanceTo(end) + 0.5);
+            if (r1 != r2) throw new ArgumentException("Argument is invalid");
+            int height = end.z - start.z;
+            start.x -= center.x;
+            start.y -= center.y;
+            end.x -= center.x;
+            end.y -= center.y;
+            int radius = (int)(center.DistanceTo(start) + 0.5);
+            List<gridpoint> q1 = new List<gridpoint>();
+            List<gridpoint> q2 = new List<gridpoint>();
+            List<gridpoint> q3 = new List<gridpoint>();
+            List<gridpoint> q4 = new List<gridpoint>();
+            gridpoint gp1 = new gridpoint(), gp2 = new gridpoint(), gp3 = new gridpoint(), gp4 = new gridpoint();
+            int x = -radius, y = 0, err = 2-2*radius; /* II. Quadrant */
+            do
+            {
+                gp1.Set(center.x-x, center.y+y); /*   I. Quadrant */
+                gp2.Set(center.x-y, center.y-x); /*  II. Quadrant */
+                gp3.Set(center.x+x, center.y-y); /* III. Quadrant */
+                gp4.Set(center.x+y, center.y+x); /*  IV. Quadrant */
+                q1.Add(gp1);
+                q2.Add(gp2);
+                q3.Add(gp3);
+                q4.Add(gp4);
+                radius = err;
+                if (radius <= y) err += ++y*2+1;           /* e_xy+e_y < 0 */
+                if (radius > x || err > y) err += ++x*2+1; /* e_xy+e_x > 0 or no 2nd y-step */
+            } while (x < 0);
+            List<gridpoint> rawcircle = new List<gridpoint>();
+            foreach (gridpoint gp in q1) rawcircle.Add(gp);
+            foreach (gridpoint gp in q2) rawcircle.Add(gp);
+            foreach (gridpoint gp in q3) rawcircle.Add(gp);
+            foreach (gridpoint gp in q4) rawcircle.Add(gp);
+            int circlesize = rawcircle.Count;
+            int startindex = 0, endindex = 0;
+            int startextreme = 2147483647, endextreme = 2147483647;
+            for (int i = 0; i < circlesize; i++)
+            {
+                int startdistance = (int)(rawcircle[i].DistanceTo(start) + 0.5);
+                if (startdistance < startextreme)
+                {
+                    startextreme = startdistance;
+                    startindex = i;
+                }
+                int enddistance = (int)(rawcircle[i].DistanceTo(end) + 0.5);
+                if (enddistance < endextreme)
+                {
+                    endextreme = enddistance;
+                    endindex = i;
+                }
+            }
+            List<gridpoint> finalcircle = new List<gridpoint>();
+            if (startindex >= endindex)
+            {
+                for (int i = startindex; i < circlesize; i++)
+                {
+                    finalcircle.Add(rawcircle[i]);
+                }
+                for (int i = 0; i <= endindex; i++)
+                {
+                    finalcircle.Add(rawcircle[i]);
+                }
+                return finalcircle;
+            }
+            if (startindex < endindex)
+            {
+                for (int i = startindex; i <= endindex; i++)
+                {
+                    finalcircle.Add(rawcircle[i]);
+                }
+                return finalcircle;
+            }
+            return null;
+        }
+        public static List<gridpoint> GetCircleCW(gridpoint center, gridpoint start, gridpoint end)
+        {
+            int r1 = (int)(center.DistanceTo(start) + 0.5);
+            int r2 = (int)(center.DistanceTo(end) + 0.5);
+            if (r1 != r2) throw new ArgumentException("Argument is invalid");
+            int height = end.z - start.z;
+            start.x -= center.x;
+            start.y -= center.y;
+            end.x -= center.x;
+            end.y -= center.y;
+            int radius = (int)(center.DistanceTo(start) + 0.5);
+            List<gridpoint> q1 = new List<gridpoint>();
+            List<gridpoint> q2 = new List<gridpoint>();
+            List<gridpoint> q3 = new List<gridpoint>();
+            List<gridpoint> q4 = new List<gridpoint>();
+            gridpoint gp1 = new gridpoint(), gp2 = new gridpoint(), gp3 = new gridpoint(), gp4 = new gridpoint();
+            int x = -radius, y = 0, err = 2-2*radius; /* II. Quadrant */
+            do
+            {
+                gp1.Set(center.x-x, center.y+y); /*   I. Quadrant */
+                gp2.Set(center.x-y, center.y-x); /*  II. Quadrant */
+                gp3.Set(center.x+x, center.y-y); /* III. Quadrant */
+                gp4.Set(center.x+y, center.y+x); /*  IV. Quadrant */
+                q1.Add(gp1);
+                q2.Add(gp2);
+                q3.Add(gp3);
+                q4.Add(gp4);
+                radius = err;
+                if (radius <= y) err += ++y*2+1;           /* e_xy+e_y < 0 */
+                if (radius > x || err > y) err += ++x*2+1; /* e_xy+e_x > 0 or no 2nd y-step */
+            } while (x < 0);
+            List<gridpoint> rawcircle = new List<gridpoint>();
+            foreach (gridpoint gp in q1) rawcircle.Add(gp);
+            foreach (gridpoint gp in q2) rawcircle.Add(gp);
+            foreach (gridpoint gp in q3) rawcircle.Add(gp);
+            foreach (gridpoint gp in q4) rawcircle.Add(gp);
+            rawcircle.Reverse();
+            int circlesize = rawcircle.Count;
+            int startindex = 0, endindex = 0;
+            int startextreme = 2147483647, endextreme = 2147483647;
+            for (int i = 0; i < circlesize; i++)
+            {
+                int startdistance = (int)(rawcircle[i].DistanceTo(start) + 0.5);
+                if (startdistance < startextreme)
+                {
+                    startextreme = startdistance;
+                    startindex = i;
+                }
+                int enddistance = (int)(rawcircle[i].DistanceTo(end) + 0.5);
+                if (enddistance < endextreme)
+                {
+                    endextreme = enddistance;
+                    endindex = i;
+                }
+            }
+            List<gridpoint> finalcircle = new List<gridpoint>();
+            if (startindex >= endindex)
+            {
+                for (int i = startindex; i < circlesize; i++)
+                {
+                    finalcircle.Add(rawcircle[i]);
+                }
+                for (int i = 0; i <= endindex; i++)
+                {
+                    finalcircle.Add(rawcircle[i]);
+                }
+                return finalcircle;
+            }
+            if (startindex < endindex)
+            {
+                for (int i = startindex; i <= endindex; i++)
+                {
+                    finalcircle.Add(rawcircle[i]);
+                }
+                return finalcircle;
+            }
+            return null;
+        }
+    }
+    #endregion
+
+    public class CNC : Form1
+    {
+        #region port
+
+        private SerialPort PORT = new SerialPort();
+        public bool jepřipojen { get; private set; } = false;
+
+        public Exception Připojit()
+        {
+            if (PORT.IsOpen || jepřipojen) return null;
+            try
+            {
+                PORT.Open();
+            }
+            catch (Exception ex)
+            {
+                jepřipojen = false;
+                return ex;
+            }
+            jepřipojen = true;
+            return null;
+        }
+
+        public void VychoziNastaveni()
+        {
+            PORT.BaudRate = 921600;
+            PORT.DataBits = 8;
+            PORT.Parity = Parity.None;
+            PORT.StopBits = StopBits.None;
+            PORT.Handshake = Handshake.None;
+            PORT.DtrEnable = true;
+            PORT.RtsEnable = false;
+            PORT.ReadTimeout = 10;
+            PORT.WriteTimeout = 10;
+            PORT.ReceivedBytesThreshold = 4;
+        }
+        #endregion
     }
 }

@@ -1579,7 +1579,7 @@ namespace CNC_Terminál
                 {
                     finalcircle.Add(rawcircle[i]);
                 }
-                return finalcircle;
+                return VerticalMotion(finalcircle, height);
             }
             if (startindex < endindex)
             {
@@ -1587,7 +1587,7 @@ namespace CNC_Terminál
                 {
                     finalcircle.Add(rawcircle[i]);
                 }
-                return finalcircle;
+                return VerticalMotion(finalcircle, height);
             }
             return null;
         }
@@ -1657,7 +1657,7 @@ namespace CNC_Terminál
                 {
                     finalcircle.Add(rawcircle[i]);
                 }
-                return finalcircle;
+                return VerticalMotion(finalcircle, height);
             }
             if (startindex < endindex)
             {
@@ -1665,9 +1665,93 @@ namespace CNC_Terminál
                 {
                     finalcircle.Add(rawcircle[i]);
                 }
-                return finalcircle;
+                return VerticalMotion(finalcircle, height);
             }
             return null;
+        }
+        private static List<gridpoint> VerticalMotion(List<gridpoint> motion, int height, bool recursion = false)
+        {
+            if ((motion == null) || (motion.Count == 0)) throw new ArgumentException("Invalid data");
+            if (height == 0) return motion;
+            bool layering = false; // true -> nahoru, false -> dolů
+            int field = motion.Count;
+            double ratio;
+            if (field == Math.Abs(height))
+            {
+                if (height > 0)
+                {
+                    List<gridpoint> nlist = new List<gridpoint>();
+                    for (int i = 0; i < field; i++)
+                    {
+                        gridpoint n = motion[i];
+                        n.z += 1;
+                        motion[i] = n;
+                    }
+                }
+                if (height < 0)
+                {
+                    List<gridpoint> nlist = new List<gridpoint>();
+                    for (int i = 0; i < field; i++)
+                    {
+                        gridpoint n = motion[i];
+                        n.z -= 1;
+                        motion[i] = n;
+                    }
+                }
+                return motion;
+            }
+            if (height > 0) layering = true;
+            else layering = false;
+            if (field > Math.Abs(height))
+            {
+                gridpoint q = motion[0];
+                if (layering) q.z += 1;
+                else q.z -= 1;
+                motion[0] = q;
+                ratio = (double)field / (double)height;
+                int counter = 0;
+                int treshold = (int)Math.Round(ratio);
+                for (int i = 0; i < field; i++)
+                {
+                    counter++;
+                    if (counter >= treshold)
+                    {
+                        counter = 0;
+                        gridpoint n = motion[i];
+                        if (layering) n.z += 1;
+                        else n.z -= 1;
+                        motion[i] = n;
+                    }
+                }
+            }
+            if (field < Math.Abs(height))
+            {
+                gridpoint q = motion[0];
+                if (layering) q.z += 1;
+                else q.z -= 1;
+                motion[0] = q;
+                ratio = (double)height / (double)field;
+                int treshold = (int)Math.Round(ratio);
+                for (int i = 0; i < field; i++)
+                {
+                    gridpoint n = motion[i];
+                    if (layering) n.z += treshold;
+                    else n.z -= treshold;
+                    motion[i] = n;
+                }
+            }
+            if (!recursion)
+            {
+                gridpoint start = motion[0];
+                gridpoint test = motion[field - 1];
+                start.z += height;
+                if (start.z != test.z)
+                {
+                    int difference = start.z - test.z;
+                    motion = VerticalMotion(motion, difference, true);
+                }
+            }
+            return motion;
         }
     }
     #endregion

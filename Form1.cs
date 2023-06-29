@@ -10,6 +10,7 @@ using System.Windows.Forms;
 using System.IO.Ports;
 using System.Threading;
 using System.Windows;
+using System.IO;
 
 namespace CNC_Terminál
 {
@@ -175,6 +176,46 @@ namespace CNC_Terminál
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            #region test připojení
+            SerialStream stream = new SerialStream();
+            String port = "COM19";
+            stream.Port.PortName = port;
+            Console.WriteLine("připojování...");
+            if (stream.Connect()) Console.WriteLine("připojeno");
+            else
+            {
+                Console.WriteLine("nepodařilo se připojit: {0}", stream.connectexception.Message);
+                Console.ReadKey();
+            }
+            CNC cnc = new CNC(stream);
+            while (true)
+            {
+                Console.Write("\nzadej zprávu: ");
+                string zpráva = Console.ReadLine();
+                stream.WriteLine(zpráva);
+                cnc.CncCommunication.WriteLine(zpráva);
+                while (stream.available > 0)
+                {
+                    //Console.Write(stream.Read());
+                    Console.Write(cnc.CncCommunication.Read());
+                }
+                Console.WriteLine("\ndostupná data ze streamu: {0}", stream.available);
+                if (!stream.Port.IsOpen) { Console.WriteLine("\nport odpojen"); break; }
+            }
+            Console.ReadKey();
+            #endregion
+            #region test čtení souboru
+            GCodeFile gcf = new GCodeFile("e:test.txt");
+            Console.WriteLine("začátek testu...");
+            Console.WriteLine("počet řádků: {0}", gcf.lines.Count);
+            Console.WriteLine("obsah:");
+            foreach (string line in gcf.lines)
+            {
+                Console.WriteLine(line);
+            }
+            Console.WriteLine("konec obsahu...");
+            Console.ReadKey();
+            #endregion
             #region nastavení výchozího stavu
             radioButton_akczapnuto.Checked = true;
             radioButton_ventauto.Checked = true;
@@ -343,19 +384,47 @@ namespace CNC_Terminál
             velikost_radiobutton_motvyp = radioButton_motvyp.Size;
             pozice_radiobutton_motvyp = radioButton_motvyp.Location;
             #endregion
-            // test
+            #region testování kruhu
             List<byte> neco = new List<byte>
             {
                 0b11110000, 0b11110000, 0b11111111, 0b10011101, 0b10011101
             };
-            List<byte> vysledek = MOTIONGENERATOR.CompressMotion(neco);
+            List<byte> vysledek = MotionGenerator.CompressMotion(neco);
             int stuj = 1520;
             gridpoint cnt = new gridpoint() { x = 0, y = 0, z = 0 };
-            gridpoint rad = new gridpoint() { x = 0, y = 5, z = 0 };
-            gridpoint end = new gridpoint() { x = 0, y = 5, z = 0 };
-            List<gridpoint> pagman = MOTIONGENERATOR.GetCircleCCW(cnt, rad, end);
-            //
-            int[,] rastr = new int[32,32];
+            gridpoint rad = new gridpoint() { x = 0, y = 500, z = 0 };
+            gridpoint end = new gridpoint() { x = 0, y = 500, z = 0 };
+            List<gridpoint> pagman = MotionGenerator.GetCircleCCW(cnt, rad, end);
+            #endregion
+            #region generátor pohybu
+            List<byte> rawdata = MotionGenerator.EncodeMotion(pagman);
+            rawdata = MotionGenerator.CompressMotion(rawdata);
+            for (int i = 0; i < rawdata.Count; i++)
+            {
+                if (i == 0)
+                {
+                    Console.Write("uint8_t circledata[{0}] = {{0x{1:x},", rawdata.Count, rawdata[0]);
+                    continue;
+                }
+                if (i == (rawdata.Count - 1))
+                {
+                    Console.Write("0x{0:x}", rawdata[i]);
+                    Console.WriteLine("};");
+                    break;
+                }
+                Console.Write("0x{0:x},", rawdata[i]);
+            }
+            Console.ReadKey();
+            #endregion
+            #region test hloubky
+            foreach (gridpoint p in pagman)
+            {
+                Console.WriteLine(p.z);
+            }
+            Console.ReadKey();
+            #endregion
+            #region rastr
+            int[,] rastr = new int[32, 32];
             for (int x = 0; x < 32; x++)
             {
                 for (int y = 0; y < 32; y++)
@@ -369,15 +438,16 @@ namespace CNC_Terminál
                 for (int y_ = 31; y_ > 0; y_--)
                 {
                     Console.WriteLine();
-                    for (int x_ = 0; x_ < 32;x_++)
+                    for (int x_ = 0; x_ < 32; x_++)
                     {
                         Console.Write("{0}", rastr[x_, y_]);
                     }
                 }
             }
             Console.ReadKey();
+            #endregion
         }
-
+        #region UI
         private void groupBox_virtualnipoloha_Enter(object sender, EventArgs e)
         {
             //
@@ -1160,7 +1230,7 @@ namespace CNC_Terminál
             Nastav_UI_BezPrace();
         }
     }
-
+    #endregion
     #region generátor pohybu
     public struct gridpoint
     {
@@ -1219,6 +1289,20 @@ namespace CNC_Terminál
             p3 = Math.Pow(Math.Abs(p3), 2);
             return Math.Sqrt(p1 + p2 + p3);
         }
+        public double HorizontalDistanceTo(in gridpoint point)
+        {
+            if (this.IsEqual(point)) return 0.0;
+            double p1 = (double)point.x - (double)this.x;
+            double p2 = (double)point.y - (double)this.y;
+            p1 = Math.Pow(Math.Abs(p1), 2);
+            p2 = Math.Pow(Math.Abs(p2), 2);
+            return Math.Sqrt(p1 + p2);
+        }
+        public double VerticalDistanceTo(in gridpoint point)
+        {
+            if (this.IsEqual(point)) return 0.0;
+            return (double)(point.z - z);
+        }
         public int DirectingTo(in gridpoint point)
         {
             int result = 0;
@@ -1276,11 +1360,11 @@ namespace CNC_Terminál
                     goto next;
                 }
             }
-            next:
+        next:
             return result;
         }
     }
-    public static class MOTIONGENERATOR
+    public static class MotionGenerator
     {
         public enum direction
         {
@@ -1322,10 +1406,8 @@ namespace CNC_Terminál
         public static List<byte> DecompressMotion(in List<byte> motion)
         {
             // kontrola dat
-            if ((motion == null) || (motion.Count == 0))
-            {
-                throw new ArgumentNullException("Argument null or empty");
-            }
+            if (motion == null) throw new ArgumentNullException("Invalid argument");
+            if (motion.Count == 0) return null;
             foreach (byte step in motion)
             {
                 if (step < '@') throw new ArgumentException("Argument is invalid");
@@ -1347,10 +1429,8 @@ namespace CNC_Terminál
         public static List<byte> CompressMotion(List<byte> motion)
         {
             // kontrola dat
-            if ((motion == null) || (motion.Count == 0))
-            {
-                throw new ArgumentNullException("Argument null or empty");
-            }
+            if (motion == null) throw new ArgumentNullException("Invalid argument");
+            if (motion.Count == 0) return null;
             foreach (byte step in motion)
             {
                 if (step < '@') throw new ArgumentException("Argument is invalid");
@@ -1489,6 +1569,7 @@ namespace CNC_Terminál
         }
         public static List<gridpoint> GetLine(in gridpoint gp1, in gridpoint gp2)
         {
+            if (gp1.IsEqual(gp2)) return null;
             int x0, y0, z0, x1, y1, z1;
             x0 = gp1.x;
             y0 = gp1.y;
@@ -1514,17 +1595,41 @@ namespace CNC_Terminál
             }
             return line;
         }
+        public static List<gridpoint> GetCorrectLine(in gridpoint gp1, in gridpoint gp2)
+        {
+            if (gp1.IsEqual(gp2)) return null;
+            int x0, y0, x1, y1;
+            x0 = gp1.x;
+            y0 = gp1.y;
+            x1 = gp2.x;
+            y1 = gp2.y;
+            int height = gp2.z - gp1.z;
+            List<gridpoint> line = new List<gridpoint>();
+            int dx = Math.Abs(x1-x0), sx = x0<x1 ? 1 : -1;
+            int dy = -Math.Abs(y1-y0), sy = y0<y1 ? 1 : -1;
+            int err = dx+dy, e2; /* error value e_xy */
+            for (; ; )
+            {  /* loop */
+                gridpoint gp = new gridpoint(x0, y0, 0);
+                line.Add(gp);
+                if (x0==x1 && y0==y1) break;
+                e2 = 2*err;
+                if (e2 >= dy) { err += dy; x0 += sx; } /* e_xy+e_x > 0 */
+                if (e2 <= dx) { err += dx; y0 += sy; } /* e_xy+e_y < 0 */
+            }
+            return VerticalMotion(line, height);
+        }
         public static List<gridpoint> GetCircleCCW(gridpoint center, gridpoint start, gridpoint end)
         {
-            int r1 = (int)(center.DistanceTo(start) + 0.5);
-            int r2 = (int)(center.DistanceTo(end) + 0.5);
+            int r1 = (int)(center.HorizontalDistanceTo(start) + 0.5);
+            int r2 = (int)(center.HorizontalDistanceTo(end) + 0.5);
             if (r1 != r2) throw new ArgumentException("Argument is invalid");
             int height = end.z - start.z;
             start.x -= center.x;
             start.y -= center.y;
             end.x -= center.x;
             end.y -= center.y;
-            int radius = (int)(center.DistanceTo(start) + 0.5);
+            int radius = (int)(center.HorizontalDistanceTo(start) + 0.5);
             List<gridpoint> q1 = new List<gridpoint>();
             List<gridpoint> q2 = new List<gridpoint>();
             List<gridpoint> q3 = new List<gridpoint>();
@@ -1555,13 +1660,13 @@ namespace CNC_Terminál
             int startextreme = 2147483647, endextreme = 2147483647;
             for (int i = 0; i < circlesize; i++)
             {
-                int startdistance = (int)(rawcircle[i].DistanceTo(start) + 0.5);
+                int startdistance = (int)(rawcircle[i].HorizontalDistanceTo(start) + 0.5);
                 if (startdistance < startextreme)
                 {
                     startextreme = startdistance;
                     startindex = i;
                 }
-                int enddistance = (int)(rawcircle[i].DistanceTo(end) + 0.5);
+                int enddistance = (int)(rawcircle[i].HorizontalDistanceTo(end) + 0.5);
                 if (enddistance < endextreme)
                 {
                     endextreme = enddistance;
@@ -1593,15 +1698,15 @@ namespace CNC_Terminál
         }
         public static List<gridpoint> GetCircleCW(gridpoint center, gridpoint start, gridpoint end)
         {
-            int r1 = (int)(center.DistanceTo(start) + 0.5);
-            int r2 = (int)(center.DistanceTo(end) + 0.5);
+            int r1 = (int)(center.HorizontalDistanceTo(start) + 0.5);
+            int r2 = (int)(center.HorizontalDistanceTo(end) + 0.5);
             if (r1 != r2) throw new ArgumentException("Argument is invalid");
             int height = end.z - start.z;
             start.x -= center.x;
             start.y -= center.y;
             end.x -= center.x;
             end.y -= center.y;
-            int radius = (int)(center.DistanceTo(start) + 0.5);
+            int radius = (int)(center.HorizontalDistanceTo(start) + 0.5);
             List<gridpoint> q1 = new List<gridpoint>();
             List<gridpoint> q2 = new List<gridpoint>();
             List<gridpoint> q3 = new List<gridpoint>();
@@ -1633,13 +1738,13 @@ namespace CNC_Terminál
             int startextreme = 2147483647, endextreme = 2147483647;
             for (int i = 0; i < circlesize; i++)
             {
-                int startdistance = (int)(rawcircle[i].DistanceTo(start) + 0.5);
+                int startdistance = (int)(rawcircle[i].HorizontalDistanceTo(start) + 0.5);
                 if (startdistance < startextreme)
                 {
                     startextreme = startdistance;
                     startindex = i;
                 }
-                int enddistance = (int)(rawcircle[i].DistanceTo(end) + 0.5);
+                int enddistance = (int)(rawcircle[i].HorizontalDistanceTo(end) + 0.5);
                 if (enddistance < endextreme)
                 {
                     endextreme = enddistance;
@@ -1669,10 +1774,47 @@ namespace CNC_Terminál
             }
             return null;
         }
-        private static List<gridpoint> VerticalMotion(List<gridpoint> motion, int height, bool recursion = false)
+        private static List<gridpoint> VerticalMotion(List<gridpoint> motion, int height)
         {
-            if ((motion == null) || (motion.Count == 0)) throw new ArgumentException("Invalid data");
+            if (motion == null) throw new ArgumentException("Invalid argument");
+            if (motion.Count == 0) return null;
             if (height == 0) return motion;
+            bool direction = height > 0 ? true : false;
+            gridpoint sp = new gridpoint();
+            gridpoint ep = new gridpoint();
+            ep.x = motion.Count;
+            ep.z = height;
+            List<gridpoint> complist = GetLine(sp, ep);
+            int lastx = 0;
+            int lastz = 0;
+            int index = 0;
+            int depth = 0;
+            sp = new gridpoint();
+            ep = new gridpoint();
+            for (int i = 0; i < complist.Count; i++)
+            {
+                if (lastz != complist[i].z)
+                {
+                    if (direction) depth++;
+                    else depth--;
+                    lastz = complist[i].z;
+                }
+                sp = motion[index];
+                //ep = complist[i];
+                //sp.z += ep.z;
+                //
+                sp.z = depth;
+                motion[index] = sp;
+                if (lastx != complist[i].x)
+                {
+                    index++;
+                    if (index >= motion.Count) index = motion.Count - 1;
+                    lastx = complist[i].x;
+                }
+            }
+            #region starý algoritmus
+            /*
+            int depth = 0;
             bool layering = false; // true -> nahoru, false -> dolů
             int field = motion.Count;
             double ratio;
@@ -1680,37 +1822,39 @@ namespace CNC_Terminál
             {
                 if (height > 0)
                 {
-                    List<gridpoint> nlist = new List<gridpoint>();
                     for (int i = 0; i < field; i++)
                     {
                         gridpoint n = motion[i];
-                        n.z += 1;
+                        n.z += ++depth;
                         motion[i] = n;
                     }
                 }
                 if (height < 0)
                 {
-                    List<gridpoint> nlist = new List<gridpoint>();
                     for (int i = 0; i < field; i++)
                     {
                         gridpoint n = motion[i];
-                        n.z -= 1;
+                        n.z += --depth;
                         motion[i] = n;
                     }
                 }
                 return motion;
             }
-            if (height > 0) layering = true;
-            else layering = false;
+            if (height > 0)
+            {
+                layering = true;
+                depth++;
+            }
+            else
+            {
+                layering = false;
+                depth--;
+            }
             if (field > Math.Abs(height))
             {
-                gridpoint q = motion[0];
-                if (layering) q.z += 1;
-                else q.z -= 1;
-                motion[0] = q;
                 ratio = (double)field / (double)height;
                 int counter = 0;
-                int treshold = (int)Math.Round(ratio);
+                int treshold = Math.Abs((int)Math.Round(ratio));
                 for (int i = 0; i < field; i++)
                 {
                     counter++;
@@ -1718,8 +1862,14 @@ namespace CNC_Terminál
                     {
                         counter = 0;
                         gridpoint n = motion[i];
-                        if (layering) n.z += 1;
-                        else n.z -= 1;
+                        if (layering) n.z += ++depth;
+                        else n.z += --depth;
+                        motion[i] = n;
+                    }
+                    else
+                    {
+                        gridpoint n = motion[i];
+                        n.z += depth;
                         motion[i] = n;
                     }
                 }
@@ -1727,16 +1877,24 @@ namespace CNC_Terminál
             if (field < Math.Abs(height))
             {
                 gridpoint q = motion[0];
-                if (layering) q.z += 1;
-                else q.z -= 1;
+                if (layering) q.z += ++depth;
+                else q.z += --depth;
                 motion[0] = q;
                 ratio = (double)height / (double)field;
                 int treshold = (int)Math.Round(ratio);
                 for (int i = 0; i < field; i++)
                 {
                     gridpoint n = motion[i];
-                    if (layering) n.z += treshold;
-                    else n.z -= treshold;
+                    if (layering)
+                    {
+                        depth += treshold;
+                        n.z += depth;
+                    }
+                    else
+                    {
+                        depth -= treshold;
+                        n.z += depth;
+                    }
                     motion[i] = n;
                 }
             }
@@ -1749,49 +1907,390 @@ namespace CNC_Terminál
                 {
                     int difference = start.z - test.z;
                     motion = VerticalMotion(motion, difference, true);
+                    gridpoint finaltest = motion[field - 1];
+                    difference = start.z - finaltest.z;
+                    if (difference != 0) finaltest.z += difference;
+                    motion[field - 1] = finaltest;
                 }
             }
+            */
+            #endregion
             return motion;
+        }
+        public static List<byte> EncodeMotion(in List<gridpoint> motion)
+        {
+            // kontrola dat
+            if (motion.Count == 0) return null;
+            if (motion == null) throw new ArgumentException("Invalid argument");
+            // zpracování dat
+            gridpoint p1 = motion[0], p2 = motion[motion.Count - 1];
+            float hdistance = (float)(p1.HorizontalDistanceTo(p2));
+            float vdistance = (float)(p2.z - p1.z);
+            float ratio = hdistance / vdistance;
+            bool ratiocomp = ratio < 2.5f;
+            List<byte> data = new List<byte>();
+            for (int i = 0; i < motion.Count; i++)
+            {
+                if (i == motion.Count - 1) break;
+                // příprava proměnných
+                gridpoint gp1 = motion[i];
+                gridpoint gp2 = motion[i + 1];
+                int dir = gp1.DirectingTo(gp2);
+                #region vertikální složka
+                if (dir > 99)
+                {
+                    int height = gp2.z - gp1.z;
+                    if (dir > 199) dir -= 200;
+                    else dir -= 100;
+                    if (1 < Math.Abs(height))
+                    {
+                        if (height > 0)
+                        {
+                            for (int n = 0; n < Math.Abs(height); n++)
+                            {
+                                data.Add(directionmask[(int)direction.Z_nahoru]);
+                            }
+                        }
+                        else
+                        {
+                            for (int n = 0; n < Math.Abs(height); n++)
+                            {
+                                data.Add(directionmask[(int)direction.Z_dolů]);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (height > 0)
+                        {
+                            for (int n = 0; n < Math.Abs(height); n++)
+                            {
+                                if (ratiocomp) data.Add(directionmask[(int)direction.Z_nahoru]);
+                                else data.Add(directionmask[(int)direction.Z_nahoru_bez_čekání]);
+                            }
+                        }
+                        else
+                        {
+                            for (int n = 0; n < Math.Abs(height); n++)
+                            {
+                                if (ratiocomp) data.Add(directionmask[(int)direction.Z_dolů]);
+                                else data.Add(directionmask[(int)direction.Z_dolů_bez_čekání]);
+                            }
+                        }
+                    }
+                }
+                #endregion
+                #region horizontální složka
+                data.Add(directionmask[dir]);
+                #endregion
+            }
+            return data;
         }
     }
     #endregion
-
-    public class CNC : Form1
+    #region čtení souboru
+    public class GCodeFile
     {
-        #region port
-
-        private SerialPort PORT = new SerialPort();
-        public bool jepřipojen { get; private set; } = false;
-
-        public Exception Připojit()
+        public string adress { get; protected set; }
+        public List<string> lines { get; private set; }
+        public GCodeFile()
         {
-            if (PORT.IsOpen || jepřipojen) return null;
+            adress = "";
+            lines = new List<string>();
+        }
+        public GCodeFile(string file_adress)
+        {
+            adress = file_adress;
+            lines = new List<string>();
+            ReadFile(file_adress);
+        }
+        public List<string> ReadFile(string file_adress)
+        {
+            StreamReader SR;
+            try { SR = new StreamReader(file_adress); }
+            catch (Exception) { return null; }
+            if (SR == null) return null;
+            if (SR.Peek() < 0) return null;
+            else lines.Clear();
             try
             {
-                PORT.Open();
+                while (SR.Peek() >= 0) lines.Add(SR.ReadLine());
             }
-            catch (Exception ex)
-            {
-                jepřipojen = false;
-                return ex;
-            }
-            jepřipojen = true;
-            return null;
+            catch (Exception) { return null; }
+            try { SR.Close(); }
+            catch (Exception) { }
+            return lines;
         }
-
-        public void VychoziNastaveni()
-        {
-            PORT.BaudRate = 921600;
-            PORT.DataBits = 8;
-            PORT.Parity = Parity.None;
-            PORT.StopBits = StopBits.None;
-            PORT.Handshake = Handshake.None;
-            PORT.DtrEnable = true;
-            PORT.RtsEnable = false;
-            PORT.ReadTimeout = 10;
-            PORT.WriteTimeout = 10;
-            PORT.ReceivedBytesThreshold = 4;
-        }
-        #endregion
     }
+    #endregion
+    #region nastavení CNC
+    public class CNC
+    {
+        public string machinename { get; private set; }
+        public string softwareversion { get; private set; }
+        public bool[] axesenabled { get; private set; }
+        public bool[] endstopflags { get; private set; }
+        public int[] realpoz { get; private set; }
+        public int[] artpoz { get; private set; }
+        public bool[] axisiscalibrated { get; private set; }
+        public bool accelerationenabled { get; private set; }
+        public int accelerationtreshold { get; private set; }
+        public int acceleration { get; private set; }
+        public Communication CncCommunication { get; private set; }
+        public CNC()
+        {
+            machinename = "";
+            softwareversion = "";
+            axesenabled = new bool[3];
+            endstopflags = new bool[3];
+            realpoz = new int[3];
+            artpoz = new int[3];
+            axisiscalibrated = new bool[3];
+            accelerationenabled = false;
+            accelerationtreshold = 0;
+            acceleration = 0;
+            CncCommunication = null;
+        }
+        public CNC(Communication communication_object)
+        {
+            machinename = "";
+            softwareversion = "";
+            axesenabled = new bool[3];
+            endstopflags = new bool[3];
+            realpoz = new int[3];
+            artpoz = new int[3];
+            axisiscalibrated = new bool[3];
+            accelerationenabled = false;
+            accelerationtreshold = 0;
+            acceleration = 0;
+            CncCommunication = communication_object;
+        }
+        public void Test()
+        {
+            if (CncCommunication.isconnected) CncCommunication.WriteLine("EL Paguero");
+        }
+    }
+    #endregion
+    #region komunikace s CNC
+    public class Communication
+    {
+        public bool isconnected { get; protected set; }
+        public int available { get { return datain.Length; } private set { available = value; } }
+        protected string datain;
+        protected string dataout;
+        public Communication()
+        {
+            isconnected = false;
+            datain = "";
+            dataout = "";
+        }
+        public char Read()
+        {
+            if (datain.Length == 0) throw new Exception("Any data to read");
+            char data = datain[0];
+            datain = datain.Remove(0, 1);
+            return data;
+        }
+        public string ReadLine()
+        {
+            if (datain.Length == 0) throw new Exception("Any data to read");
+            string data = "";
+            do
+            {
+                data += datain[0];
+                datain = datain.Remove(0, 1);
+            } while ((datain.Length > 0) && (data[data.Length - 1]  != '\n'));
+            return data;
+        }
+        public void Write(char data_to_send)
+        {
+            dataout += data_to_send.ToString();
+            OnDataToSend();
+        }
+        public void Write(string data_to_send)
+        {
+            dataout = data_to_send;
+            OnDataToSend();
+        }
+        public void WriteLine(char data_to_send)
+        {
+            dataout += data_to_send.ToString();
+            dataout += '\n'.ToString();
+            OnDataToSend();
+        }
+        public void WriteLine(String data_to_send)
+        {
+            dataout += data_to_send;
+            dataout += '\n'.ToString();
+            OnDataToSend();
+        }
+        public void ClearReceiveCache() { datain = ""; }
+        public void ClearSendCache() { dataout = ""; }
+        public delegate void DataToSendEventHandler(object source, EventArgs e);
+        public event DataToSendEventHandler DataToSend;
+        protected virtual void OnDataToSend()
+        {
+            if (DataToSend != null) DataToSend(this, EventArgs.Empty);
+        }
+    }
+    public struct serialportsettings
+    {
+        public string settingsid;
+        public int baudrate;
+        public int databits;
+        public int readtimeout;
+        public int writetimeout;
+        public int writebuffersize;
+        public int readbuffersize;
+        public int receivedbytestreshold;
+        public bool rtsenabled;
+        public bool dtrenabled;
+        public Handshake handshake;
+        public StopBits stopbits;
+        public Parity parity;
+        public System.Text.Encoding encoding;
+        public serialportsettings(serialportsettings settings)
+        {
+            settingsid = settings.settingsid;
+            baudrate = settings.baudrate;
+            databits = settings.databits;
+            readtimeout = settings.readtimeout;
+            writetimeout = settings.writetimeout;
+            writebuffersize = settings.writebuffersize;
+            readbuffersize = settings.readbuffersize;
+            receivedbytestreshold = settings.receivedbytestreshold;
+            rtsenabled = settings.rtsenabled;
+            dtrenabled = settings.dtrenabled;
+            stopbits = settings.stopbits;
+            parity = settings.parity;
+            handshake = settings.handshake;
+            encoding = settings.encoding;
+        }
+        public void Default()
+        {
+            settingsid = "default";
+            baudrate = 115200; //921600
+            databits = 8;
+            readtimeout = 200;
+            writetimeout = 200;
+            writebuffersize = 65536;
+            readbuffersize = 65536;
+            receivedbytestreshold = 2;
+            rtsenabled = false;
+            dtrenabled = true;
+            stopbits = StopBits.One;
+            parity = Parity.None;
+            handshake = Handshake.None;
+            encoding = System.Text.Encoding.ASCII;
+        }
+    }
+    public class SerialStream : Communication
+    {
+        public Exception connectexception { get; private set; }
+        public Exception disconnectexception { get; private set; }
+        public Exception runtimeexception { get; private set; }
+        public serialportsettings settings { get; protected set; }
+        public SerialPort Port { get; protected set; }
+        public SerialStream()
+        {
+            Port = new SerialPort();
+            settings = new serialportsettings();
+            settings.Default();
+            ApplySettings(settings);
+            connectexception = null;
+            disconnectexception = null;
+            runtimeexception = null;
+        }
+        public SerialStream(in serialportsettings port_settings)
+        {
+            Port = new SerialPort();
+            settings = port_settings;
+            ApplySettings(settings);
+            connectexception = null;
+            disconnectexception = null;
+            runtimeexception = null;
+        }
+        public void ApplySettings(in serialportsettings port_settings)
+        {
+            try
+            {
+                Port.BaudRate = settings.baudrate;
+                Port.DataBits = settings.databits;
+                Port.DtrEnable = settings.dtrenabled;
+                Port.RtsEnable = settings.rtsenabled;
+                Port.Encoding = settings.encoding;
+                Port.Handshake = settings.handshake;
+                Port.Parity = settings.parity;
+                Port.StopBits = settings.stopbits;
+                Port.ReadTimeout = settings.readtimeout;
+                Port.WriteTimeout = settings.writetimeout;
+                Port.ReceivedBytesThreshold = settings.receivedbytestreshold;
+                Port.WriteBufferSize = settings.writebuffersize;
+                Port.ReadBufferSize = settings.readbuffersize;
+            }
+            catch (Exception) { }
+        }
+        public bool Connect()
+        {
+            if (Port == null) throw new Exception("Port object is null");
+            if (Port.IsOpen) { isconnected = true; return true; }
+            try
+            {
+                Port.Open();
+            }
+            catch (Exception ex) { connectexception = ex; return false; }
+            isconnected = true;
+            DataToSend += OnDataToSend;
+            Port.DataReceived += OnDataRecieved;
+            return true;
+        }
+        public bool Disconnect()
+        {
+            if (Port == null) throw new Exception("Port object is null");
+            if (!Port.IsOpen) { isconnected = false; return true; }
+            var CloseDown = new System.Threading.Thread(new System.Threading.ThreadStart(DisconnectThread));
+            CloseDown.Start();
+            Thread.Sleep(100);
+            if (Port.IsOpen) return false;
+            isconnected = false;
+            return true;
+        }
+        private void DisconnectThread()
+        {
+            if (Port.IsOpen)
+            {
+                try
+                {
+                    DataToSend -= OnDataToSend;
+                    Port.DataReceived -= OnDataRecieved;
+                    Thread.Sleep(50);
+                    Port.Close();
+                }
+                catch (Exception ex) { disconnectexception = ex; return; }
+            }
+        }
+        public void OnDataToSend(object source, EventArgs e)
+        {
+            if (source == null) throw new Exception("Invalid source");
+            if (!Port.IsOpen) { isconnected = false; return; }
+            try
+            {
+                Port.Write(dataout);
+            }
+            catch (Exception ex) { runtimeexception = ex; return; }
+            dataout = "";
+        }
+        public void OnDataRecieved(object source, EventArgs e)
+        {
+            if (source == null) throw new Exception("Source is null");
+            if (!Port.IsOpen) { isconnected = false; return; }
+            try
+            {
+                datain += Port.ReadExisting();
+            }
+            catch (Exception ex) { runtimeexception = ex; return; }
+            if (Port.IsOpen) isconnected = true;
+        }
+    }
+    #endregion
 }

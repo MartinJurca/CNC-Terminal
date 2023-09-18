@@ -168,7 +168,6 @@ namespace CNC_Terminál
         Size velikost_radiobutton_motvyp;
         Point pozice_radiobutton_motvyp;
         #endregion
-
         public Form1()
         {
             InitializeComponent();
@@ -176,6 +175,19 @@ namespace CNC_Terminál
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            #region test separace
+            Console.WriteLine("Test separace...");
+            DataDivider.Divide("lkajd[pagman:1520]slkjfs[xDdd:420]vgbf[neco]");
+            int max = DataDivider.available;
+            for (int i = 0; i < max; i++)
+            {
+                string j = "", d = "";
+                DataDivider.Read(ref j,ref d);
+                Console.WriteLine("[{0}:{1}]", j, d);
+            }
+            Console.WriteLine("Test odběru z vrchu...");
+            Console.ReadKey();
+            #endregion
             #region test připojení
             SerialStream stream = new SerialStream();
             String port = "COM19";
@@ -2023,9 +2035,53 @@ namespace CNC_Terminál
         }
     }
     #endregion
-    #region nastavení CNC
+    #region nastavení a manipulace s CNC
     public class CNC
     {
+        #region Konstruktory
+        public CNC()
+        {
+            calltohold = false;
+            readytohold = false;
+            closing = false;
+            readytoclose = false;
+            UpdateThread.Name = "UpdateThread";
+            machinename = "";
+            softwareversion = "";
+            axesenabled = new bool[3];
+            endstopflags = new bool[4];
+            realpoz = new int[3];
+            artpoz = new int[3];
+            axisiscalibrated = new bool[3];
+            accelerationenabled = false;
+            accelerationtreshold = 0;
+            acceleration = 0;
+            CncCommunication = null;
+            UpdateThread = new Thread(new ThreadStart(UpdateThreadFunction));
+        }
+        public CNC(Communication communication_object)
+        {
+            if (communication_object == null) throw new ArgumentException("Argument is null");
+            calltohold = false;
+            readytohold = false;
+            closing = false;
+            readytoclose = false;
+            UpdateThread.Name = "UpdateThread";
+            machinename = "";
+            softwareversion = "";
+            axesenabled = new bool[3];
+            endstopflags = new bool[4];
+            realpoz = new int[3];
+            artpoz = new int[3];
+            axisiscalibrated = new bool[3];
+            accelerationenabled = false;
+            accelerationtreshold = 0;
+            acceleration = 0;
+            CncCommunication = communication_object;
+            UpdateThread = new Thread(new ThreadStart(UpdateThreadFunction));
+        }
+        #endregion
+        #region Vlastnosti CNC
         public string machinename { get; private set; }
         public string softwareversion { get; private set; }
         public bool[] axesenabled { get; private set; }
@@ -2036,41 +2092,543 @@ namespace CNC_Terminál
         public bool accelerationenabled { get; private set; }
         public int accelerationtreshold { get; private set; }
         public int acceleration { get; private set; }
+        #endregion
+        #region Komunikace
         public Communication CncCommunication { get; private set; }
-        public CNC()
+        public void SetCommunication(Communication communication_object)
         {
-            machinename = "";
-            softwareversion = "";
-            axesenabled = new bool[3];
-            endstopflags = new bool[3];
-            realpoz = new int[3];
-            artpoz = new int[3];
-            axisiscalibrated = new bool[3];
-            accelerationenabled = false;
-            accelerationtreshold = 0;
-            acceleration = 0;
-            CncCommunication = null;
-        }
-        public CNC(Communication communication_object)
-        {
-            machinename = "";
-            softwareversion = "";
-            axesenabled = new bool[3];
-            endstopflags = new bool[3];
-            realpoz = new int[3];
-            artpoz = new int[3];
-            axisiscalibrated = new bool[3];
-            accelerationenabled = false;
-            accelerationtreshold = 0;
-            acceleration = 0;
+            if (communication_object == null) throw new ArgumentException("Argument is null");
             CncCommunication = communication_object;
         }
-        public void Test()
+        #endregion
+        #region Události odpovědí CNC
+        public delegate void CncFailureEventHandler(object source, EventArgs e);
+        public event CncFailureEventHandler CncFailed;
+        protected virtual void OnCncFailed()
         {
-            if (CncCommunication.isconnected) CncCommunication.WriteLine("EL Paguero");
+            if (CncFailed != null) CncFailed(this, EventArgs.Empty);
         }
+        public delegate void InfoUpdatedEventHandler(object source, EventArgs e);
+        public event InfoUpdatedEventHandler InfoUpdated;
+        protected virtual void OnInfoUpdated()
+        {
+            if (CncFailed != null) InfoUpdated(this, EventArgs.Empty);
+        }
+        #endregion
+        #region Procesy na pozadí
+        private bool calltohold;
+        private bool readytohold;
+        private bool closing;
+        private bool readytoclose;
+        public Thread UpdateThread { get; private set; }
+        public void StartUpdateThread()
+        {
+            closing = false;
+            readytoclose = false;
+            calltohold = false;
+            readytohold = false;
+            if (UpdateThread.IsAlive) return;
+            else
+            {
+                try
+                {
+                    UpdateThread.Start();
+                }
+                catch (Exception) { }
+            }
+        }
+        public void StopUpdateThread()
+        {
+            if (!UpdateThread.IsAlive) return;
+            else
+            {
+                closing = true;
+                int timeoutcounter = 0;
+                while ((readytoclose = false) && (timeoutcounter < 100))
+                {
+                    Thread.Sleep(10);
+                    timeoutcounter++;
+                }
+                try
+                {
+                    UpdateThread.Abort();
+                }
+                catch (Exception) { }
+            }
+            closing = false;
+            readytoclose = false;
+            calltohold = false;
+            readytohold = false;
+        }
+        public void SuspendUpdateThread()
+        {
+            if (!UpdateThread.IsAlive) return;
+            if ((UpdateThread.ThreadState == ThreadState.Suspended) || (UpdateThread.ThreadState == ThreadState.Unstarted)) return;
+            calltohold = true;
+            int timeoutcounter = 0;
+            while ((readytohold = false) && (timeoutcounter < 100))
+                {
+                timeoutcounter++;
+                Thread.Sleep(10);
+            }
+            try
+            {
+                UpdateThread.Suspend();
+            }
+            catch (Exception) { }
+            calltohold = false;
+            readytohold = false;
+        }
+        public void ResumeUpdateThread()
+        {
+            if (!UpdateThread.IsAlive) return;
+            if ((UpdateThread.ThreadState != ThreadState.Suspended) || (UpdateThread.ThreadState == ThreadState.Unstarted)) return;
+            try
+            {
+                UpdateThread.Resume();
+            }
+            catch (Exception) { }
+        }
+        private void UpdateThreadFunction()
+        {
+            while (true)
+            {
+                if ((CncCommunication != null) && (CncCommunication.isconnected && (CncCommunication.available > 0)))
+                {
+                    bool infochanged = false;
+                    bool failureoccoured = false;
+                    string command = "";
+                    string argument = "";
+                    DataDivider.ClearCache();
+                    Thread.Sleep(20);
+                    string data = "";
+                    while (CncCommunication.available > 0)
+                    {
+                        try { data += CncCommunication.ReadLine(); }
+                        catch (Exception) { break; }
+                    }
+                    if (data.Length < 2) continue;
+                    DataDivider.Divide(data);
+                    while (DataDivider.available > 0)
+                    {
+                        DataDivider.Read(ref command, ref argument);
+                        switch (command)
+                        {
+                            default: break;
+                            case "Xenabled":
+                                if (argument == "1") axesenabled[0] = true;
+                                else axesenabled[0] = false;
+                                infochanged = true;
+                                break;
+                            case "Yenabled":
+                                if (argument == "1") axesenabled[1] = true;
+                                else axesenabled[1] = false;
+                                infochanged = true;
+                                break;
+                            case "Zenabled":
+                                if (argument == "1") axesenabled[2] = true;
+                                else axesenabled[2] = false;
+                                infochanged = true;
+                                break;
+                            case "Xreal":
+                                try { realpoz[0] = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "Yreal":
+                                try { realpoz[1] = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "Zreal":
+                                try { realpoz[2] = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "Xart":
+                                try { artpoz[0] = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "Yart":
+                                try { artpoz[1] = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "Zart":
+                                try { artpoz[2] = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "Xflag":
+                                if (argument == "1") endstopflags[0] = true;
+                                else endstopflags[0] = false;
+                                infochanged = true;
+                                break;
+                            case "Yflag":
+                                if (argument == "1") endstopflags[1] = true;
+                                else endstopflags[1] = false;
+                                infochanged = true;
+                                break;
+                            case "Zflag":
+                                if (argument == "1") endstopflags[2] = true;
+                                else endstopflags[2] = false;
+                                infochanged = true;
+                                break;
+                            case "EXZflag":
+                                if (argument == "1") endstopflags[3] = true;
+                                else endstopflags[3] = false;
+                                infochanged = true;
+                                break;
+                            case "acceleration":
+                                try { acceleration = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                            case "treshold":
+                                try { accelerationtreshold = Int32.Parse(argument); }
+                                catch (Exception) { break; }
+                                infochanged = true;
+                                break;
+                        }
+                    }
+                    if (infochanged)
+                    {
+                        infochanged = false;
+                        OnInfoUpdated();
+                    }
+                }
+                else Thread.Sleep(500);
+                if (closing) break;
+                if (calltohold)
+                {
+                    readytohold = true;
+                    while (calltohold && readytohold) Thread.Sleep(500);
+                }
+            }
+            readytoclose = true;
+            while (true) Thread.Sleep(10);
+        }
+        #endregion
+        #region Funkce a práce s fyzickou CNC
+        public bool UpdateInfo()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("a#");
+                return true;
+            }
+            else return false;
+        }
+        public bool Restart()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("restart#");
+                return true;
+            }
+            else return false;
+        }
+        public bool ClearCncCache()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("~#");
+                return true;
+            }
+            else return false;
+        }
+        public bool PowerOnAxes(int axis)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                switch (axis)
+                {
+                    case 0: CncCommunication.WriteLine("b<0>#"); return true;
+                    case 1: CncCommunication.WriteLine("b<1>#"); return true;
+                    case 2: CncCommunication.WriteLine("b<2>#"); return true;
+                    case 3: CncCommunication.WriteLine("b<3>#"); return true;
+                    default: return false;
+                }
+            }
+            else return false;
+        }
+        public bool PowerOffAxes(int axis)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                switch (axis)
+                {
+                    case 0: CncCommunication.WriteLine("c<0>#"); return true;
+                    case 1: CncCommunication.WriteLine("c<1>#"); return true;
+                    case 2: CncCommunication.WriteLine("c<2>#"); return true;
+                    case 3: CncCommunication.WriteLine("c<3>#"); return true;
+                    default: return false;
+                }
+            }
+            else return false;
+        }
+        public bool EnableEndStop(int endstop)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                switch (endstop)
+                {
+                    case 0: CncCommunication.WriteLine("d<0>#"); return true;
+                    case 1: CncCommunication.WriteLine("d<1>#"); return true;
+                    case 2: CncCommunication.WriteLine("d<2>#"); return true;
+                    case 3: CncCommunication.WriteLine("d<3>#"); return true;
+                    default: return false;
+                }
+            }
+            else return false;
+        }
+        public bool DisableEndStop(int endstop)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                switch (endstop)
+                {
+                    case 0: CncCommunication.WriteLine("e<0>#"); return true;
+                    case 1: CncCommunication.WriteLine("e<1>#"); return true;
+                    case 2: CncCommunication.WriteLine("e<2>#"); return true;
+                    case 3: CncCommunication.WriteLine("e<3>#"); return true;
+                    default: return false;
+                }
+            }
+            else return false;
+        }
+        public bool SpindleOn()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("f#");
+                return true;
+            }
+            else return false;
+        }
+        public bool SpindleOff()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("g#");
+                return true;
+            }
+            else return false;
+        }
+        public bool SetFan(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string fanset = "j<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(fanset);
+                return true;
+            }
+            return false;
+        }
+        public bool ExeMotion()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("k#");
+                return true;
+            }
+            else return false;
+        }
+        public bool TransferMotion()
+        {
+            return true;
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                //
+            }
+        }
+        public bool AxesHoming(int axis)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                switch (axis)
+                {
+                    case 0: CncCommunication.WriteLine("m<0>#"); return true;
+                    case 1: CncCommunication.WriteLine("m<1>#"); return true;
+                    case 2: CncCommunication.WriteLine("m<2>#"); return true;
+                    case 3: CncCommunication.WriteLine("m<3>#"); return true;
+                    default: return false;
+                }
+            }
+            else return false;
+        }
+        public bool SetVirtualX(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string virt = "n<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(virt);
+                return true;
+            }
+            else return false;
+        }
+        public bool SetVirtualY(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string virt = "o<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(virt);
+                return true;
+            }
+            else return false;
+        }
+        public bool SetVirtualZ(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string virt = "p<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(virt);
+                return true;
+            }
+            else return false;
+        }
+        public bool EnableAcceleration()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("q#");
+                return true;
+            }
+            else return false;
+        }
+        public bool DisableAcceleration()
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                CncCommunication.WriteLine("r#");
+                return true;
+            }
+            else return false;
+        }
+        public bool SetAcceleration(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string val = "s<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(val);
+                return true;
+            }
+            else return false;
+        }
+        public bool SetTreshold(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string val = "t<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(val);
+                return true;
+            }
+            else return false;
+        }
+        public bool SetSpeedXY(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string val = "u<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(val);
+                return true;
+            }
+            else return false;
+        }
+        public bool SetSpeedZ(int value)
+        {
+            if ((CncCommunication.isconnected && !(UpdateThread.ThreadState == ThreadState.Running)) && CncCommunication != null)
+            {
+                string val = "v<" + value.ToString() + ">#";
+                CncCommunication.WriteLine(val);
+                return true;
+            }
+            else return false;
+        }
+        #endregion
     }
     #endregion
+    public static class DataDivider
+    {
+        private static readonly char openingcharacter = '[';
+        private static readonly char closingcharacter = ']';
+        private static readonly char separator = ':';
+        private static List<string> commands = new List<string>();
+        private static List<string> arguments = new List<string>();
+        public static int available { get { return commands.Count; } private set { available = value; } }
+        public static void ClearCache()
+        {
+            commands.Clear();
+            arguments.Clear();
+        }
+        public static bool Read(ref string command, ref string argument, int index = -1)
+        {
+            if (index < -1) throw new ArgumentException("Index is out of range");
+            if (index == -1)
+            {
+                if (available == 0) return false;
+                command = commands[0];
+                argument = arguments[0];
+                commands.RemoveAt(0);
+                arguments.RemoveAt(0);
+                return true;
+            }
+            if (index > (available - 1)) return false;
+            else
+            {
+                command = commands[index];
+                argument = arguments[index];
+                commands.RemoveAt(index);
+                arguments.RemoveAt(index);
+                return true;
+            }
+        }
+        public static void Divide(string data)
+        {
+            if (data.Length == 0) return;
+            int index = 0;
+            while (index < data.Length)
+            {
+                bool finish = false;
+                bool abort = false;
+                while (true)
+                {
+                    if (data[index] == openingcharacter) break;
+                    else index++;
+                    if (index >= data.Length) { abort = true; break; }
+                }
+                if (abort) continue;
+                string commandbody = "";
+                while (true)
+                {
+                    index++;
+                    if (index >= data.Length) { abort= true; break; }
+                    if (data[index] == separator) break;
+                    if (data[index] == closingcharacter) { finish = true; break; }
+                    commandbody += data[index];
+                }
+                if (abort) continue;
+                if (finish)
+                {
+                    commands.Add(commandbody);
+                    arguments.Add("");
+                    continue;
+                }
+                commands.Add(commandbody);
+                string argumentbody = "";
+                while (true)
+                {
+                    index++;
+                    if (index >= data.Length) { abort = true; break; }
+                    if (data[index] == closingcharacter) break;
+                    argumentbody += data[index];
+                }
+                if (abort) continue;
+                arguments.Add(argumentbody);
+            }
+        }
+    }
     #region komunikace s CNC
     public class Communication
     {

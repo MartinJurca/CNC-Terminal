@@ -175,6 +175,32 @@ namespace CNC_Terminál
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            #region Test procesu na pozadí
+            CNC cnc_ = new CNC();
+            Console.WriteLine("Start testu cyklu na pozadí.");
+            while (true)
+            {
+                Console.WriteLine();
+                Console.Write("1, 0, s, r: ");
+                string vyber = Console.ReadLine();
+                switch (vyber)
+                {
+                    default: break;
+                    case "1":
+                        cnc_.StartUpdateThread();
+                        break;
+                    case "0":
+                        cnc_.StopUpdateThread();
+                        break;
+                    case "s":
+                        cnc_.SuspendUpdateThread();
+                        break;
+                    case "r":
+                        cnc_.ResumeUpdateThread();
+                        break;
+                }
+            }
+            #endregion
             #region test separace
             Console.WriteLine("Test separace...");
             DataDivider.Divide("lkajd[pagman:1520]slkjfs[xDdd:420]vgbf[neco]");
@@ -2043,9 +2069,6 @@ namespace CNC_Terminál
         {
             calltohold = false;
             readytohold = false;
-            closing = false;
-            readytoclose = false;
-            UpdateThread.Name = "UpdateThread";
             machinename = "";
             softwareversion = "";
             axesenabled = new bool[3];
@@ -2058,15 +2081,13 @@ namespace CNC_Terminál
             acceleration = 0;
             CncCommunication = null;
             UpdateThread = new Thread(new ThreadStart(UpdateThreadFunction));
+            UpdateThread.Name = "UpdateThread";
         }
         public CNC(Communication communication_object)
         {
             if (communication_object == null) throw new ArgumentException("Argument is null");
             calltohold = false;
             readytohold = false;
-            closing = false;
-            readytoclose = false;
-            UpdateThread.Name = "UpdateThread";
             machinename = "";
             softwareversion = "";
             axesenabled = new bool[3];
@@ -2079,6 +2100,7 @@ namespace CNC_Terminál
             acceleration = 0;
             CncCommunication = communication_object;
             UpdateThread = new Thread(new ThreadStart(UpdateThreadFunction));
+            UpdateThread.Name = "UpdateThread";
         }
         #endregion
         #region Vlastnosti CNC
@@ -2118,13 +2140,9 @@ namespace CNC_Terminál
         #region Procesy na pozadí
         private bool calltohold;
         private bool readytohold;
-        private bool closing;
-        private bool readytoclose;
         public Thread UpdateThread { get; private set; }
         public void StartUpdateThread()
         {
-            closing = false;
-            readytoclose = false;
             calltohold = false;
             readytohold = false;
             if (UpdateThread.IsAlive) return;
@@ -2134,7 +2152,7 @@ namespace CNC_Terminál
                 {
                     UpdateThread.Start();
                 }
-                catch (Exception) { }
+                catch (Exception ex) { }
             }
         }
         public void StopUpdateThread()
@@ -2142,21 +2160,13 @@ namespace CNC_Terminál
             if (!UpdateThread.IsAlive) return;
             else
             {
-                closing = true;
-                int timeoutcounter = 0;
-                while ((readytoclose = false) && (timeoutcounter < 100))
-                {
-                    Thread.Sleep(10);
-                    timeoutcounter++;
-                }
+                if (UpdateThread.ThreadState == ThreadState.Suspended) ResumeUpdateThread();
                 try
                 {
                     UpdateThread.Abort();
                 }
                 catch (Exception) { }
             }
-            closing = false;
-            readytoclose = false;
             calltohold = false;
             readytohold = false;
         }
@@ -2193,121 +2203,122 @@ namespace CNC_Terminál
         {
             while (true)
             {
-                if ((CncCommunication != null) && (CncCommunication.isconnected && (CncCommunication.available > 0)))
+                try
                 {
-                    bool infochanged = false;
-                    bool failureoccoured = false;
-                    string command = "";
-                    string argument = "";
-                    DataDivider.ClearCache();
-                    Thread.Sleep(20);
-                    string data = "";
-                    while (CncCommunication.available > 0)
+                    if ((CncCommunication != null) && (CncCommunication.isconnected && (CncCommunication.available > 0)))
                     {
-                        try { data += CncCommunication.ReadLine(); }
-                        catch (Exception) { break; }
-                    }
-                    if (data.Length < 2) continue;
-                    DataDivider.Divide(data);
-                    while (DataDivider.available > 0)
-                    {
-                        DataDivider.Read(ref command, ref argument);
-                        switch (command)
+                        bool infochanged = false;
+                        bool failureoccoured = false;
+                        string command = "";
+                        string argument = "";
+                        DataDivider.ClearCache();
+                        Thread.Sleep(20);
+                        string data = "";
+                        while (CncCommunication.available > 0)
                         {
-                            default: break;
-                            case "Xenabled":
-                                if (argument == "1") axesenabled[0] = true;
-                                else axesenabled[0] = false;
-                                infochanged = true;
-                                break;
-                            case "Yenabled":
-                                if (argument == "1") axesenabled[1] = true;
-                                else axesenabled[1] = false;
-                                infochanged = true;
-                                break;
-                            case "Zenabled":
-                                if (argument == "1") axesenabled[2] = true;
-                                else axesenabled[2] = false;
-                                infochanged = true;
-                                break;
-                            case "Xreal":
-                                try { realpoz[0] = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "Yreal":
-                                try { realpoz[1] = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "Zreal":
-                                try { realpoz[2] = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "Xart":
-                                try { artpoz[0] = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "Yart":
-                                try { artpoz[1] = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "Zart":
-                                try { artpoz[2] = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "Xflag":
-                                if (argument == "1") endstopflags[0] = true;
-                                else endstopflags[0] = false;
-                                infochanged = true;
-                                break;
-                            case "Yflag":
-                                if (argument == "1") endstopflags[1] = true;
-                                else endstopflags[1] = false;
-                                infochanged = true;
-                                break;
-                            case "Zflag":
-                                if (argument == "1") endstopflags[2] = true;
-                                else endstopflags[2] = false;
-                                infochanged = true;
-                                break;
-                            case "EXZflag":
-                                if (argument == "1") endstopflags[3] = true;
-                                else endstopflags[3] = false;
-                                infochanged = true;
-                                break;
-                            case "acceleration":
-                                try { acceleration = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
-                            case "treshold":
-                                try { accelerationtreshold = Int32.Parse(argument); }
-                                catch (Exception) { break; }
-                                infochanged = true;
-                                break;
+                            try { data += CncCommunication.ReadLine(); }
+                            catch (Exception) { break; }
+                        }
+                        if (data.Length < 2) continue;
+                        DataDivider.Divide(data);
+                        while (DataDivider.available > 0)
+                        {
+                            DataDivider.Read(ref command, ref argument);
+                            switch (command)
+                            {
+                                default: break;
+                                case "Xenabled":
+                                    if (argument == "1") axesenabled[0] = true;
+                                    else axesenabled[0] = false;
+                                    infochanged = true;
+                                    break;
+                                case "Yenabled":
+                                    if (argument == "1") axesenabled[1] = true;
+                                    else axesenabled[1] = false;
+                                    infochanged = true;
+                                    break;
+                                case "Zenabled":
+                                    if (argument == "1") axesenabled[2] = true;
+                                    else axesenabled[2] = false;
+                                    infochanged = true;
+                                    break;
+                                case "Xreal":
+                                    try { realpoz[0] = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "Yreal":
+                                    try { realpoz[1] = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "Zreal":
+                                    try { realpoz[2] = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "Xart":
+                                    try { artpoz[0] = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "Yart":
+                                    try { artpoz[1] = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "Zart":
+                                    try { artpoz[2] = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "Xflag":
+                                    if (argument == "1") endstopflags[0] = true;
+                                    else endstopflags[0] = false;
+                                    infochanged = true;
+                                    break;
+                                case "Yflag":
+                                    if (argument == "1") endstopflags[1] = true;
+                                    else endstopflags[1] = false;
+                                    infochanged = true;
+                                    break;
+                                case "Zflag":
+                                    if (argument == "1") endstopflags[2] = true;
+                                    else endstopflags[2] = false;
+                                    infochanged = true;
+                                    break;
+                                case "EXZflag":
+                                    if (argument == "1") endstopflags[3] = true;
+                                    else endstopflags[3] = false;
+                                    infochanged = true;
+                                    break;
+                                case "acceleration":
+                                    try { acceleration = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                                case "treshold":
+                                    try { accelerationtreshold = Int32.Parse(argument); }
+                                    catch (Exception) { break; }
+                                    infochanged = true;
+                                    break;
+                            }
+                        }
+                        if (infochanged)
+                        {
+                            infochanged = false;
+                            OnInfoUpdated();
                         }
                     }
-                    if (infochanged)
-                    {
-                        infochanged = false;
-                        OnInfoUpdated();
-                    }
+                    else Thread.Sleep(100);
                 }
-                else Thread.Sleep(500);
-                if (closing) break;
+                catch (ThreadAbortException ex) { break; }
                 if (calltohold)
                 {
                     readytohold = true;
                     while (calltohold && readytohold) Thread.Sleep(500);
                 }
             }
-            readytoclose = true;
-            while (true) Thread.Sleep(10);
         }
         #endregion
         #region Funkce a práce s fyzickou CNC
